@@ -284,18 +284,9 @@ function appendAuditLog(
 }
 
 function roleToActor(role: UserRole): string {
-  switch (role) {
-    case 'SOC Tier 3 Lead':
-      return 'm.chen@sentinel.io';
-    case 'SOC Tier 1 Analyst':
-      return 'j.rivera@sentinel.io';
-    case 'Red Team Assessor':
-      return 'a.patel@sentinel.io';
-    case 'Compliance Lead':
-      return 's.okafor@sentinel.io';
-    case 'CISO':
-      return 'e.vance@sentinel.io';
-  }
+  // The current role selector is demo-only and is not an authenticated identity.
+  // Never attribute actions to fabricated employee email addresses.
+  return `unverified-demo-role:${role}`;
 }
 
 // Health Check
