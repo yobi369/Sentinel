@@ -106,10 +106,13 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ alertId, role }),
     });
-    if (res.ok) {
-      await fetchState();
-      showToast(alertId ? `Playbook ${playbookId} mitigated ${alertId}` : `Executed ${playbookId}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(data.message || data.error || `Playbook ${playbookId} was not executed`);
+      return;
     }
+    await fetchState();
+    showToast(alertId ? `Playbook ${playbookId} completed for ${alertId}` : `Executed ${playbookId}`);
   };
 
   const handleToggleAutoTrigger = async (playbookId: string, nextVal: boolean) => {
@@ -132,10 +135,13 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...updates, role }),
     });
-    if (res.ok) {
-      await fetchState();
-      showToast(`Updated triage state for ${alertId}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(data.message || data.error || `Could not update ${alertId}`);
+      return;
     }
+    await fetchState();
+    showToast(`Updated triage state for ${alertId}`);
   };
 
   const handleIsolateAsset = async (assetId: string, restore = false) => {
@@ -144,10 +150,13 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ role, restore }),
     });
-    if (res.ok) {
-      await fetchState();
-      showToast(restore ? `Restored network access for ${assetId}` : `Isolated host ${assetId} via eBPF`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(data.message || data.error || `Containment was not performed for ${assetId}`);
+      return;
     }
+    await fetchState();
+    showToast(restore ? `Restoration completed for ${assetId}` : `Containment completed for ${assetId}`);
   };
 
   const handleToggleRule = async (ruleId: string, enabled: boolean) => {
