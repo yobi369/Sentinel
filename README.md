@@ -1,6 +1,6 @@
 # SentinelAI
 
-**Cloud SIEM, Attack Surface Inspector & Autonomous Incident Response Platform**
+**Security operations platform for telemetry collection, detection engineering and evidence-led investigation**
 
 SentinelAI is a full-stack TypeScript security operations platform built with React, Tailwind CSS, Express, Node.js network/crypto primitives, and the server-side `@google/genai` SDK.
 
@@ -8,9 +8,9 @@ SentinelAI is a full-stack TypeScript security operations platform built with Re
 
 ## Core Capabilities
 
-- **Incident Triage & SOAR Playbooks**: High-density triage queue with persistent incident states (`Active`, `Investigating`, `Mitigated`, `Closed`), analyst notes, eBPF host quarantine controls, and automated response playbooks.
+- **Incident Triage & SOAR Playbooks**: High-density triage queue with persistent incident states (`Active`, `Investigating`, `Mitigated`, `Closed`), analyst notes and response playbook definitions. External containment is disabled until a verified response adapter is configured.
 - **Detection Engineering & Live Rule Tester**: Manage Sigma, YARA, and Suricata signatures, benchmark regex patterns against ingested telemetry in milliseconds (protected against catastrophic backtracking), and deploy custom detection rules.
-- **External Telemetry Webhook Collector (`/api/v1/ingest/webhook`)**: Stream syslog, Suricata, Zeek, or application JSON events from external infrastructure into SentinelAI with optional Bearer/header key verification and real-time Server-Sent Events (`/api/stream`) UI updates.
+- **External Telemetry Webhook Collector (`/api/v1/ingest/webhook`)**: Stream syslog, Suricata, Zeek, or application JSON events from external infrastructure into SentinelAI with mandatory Bearer/header key verification (minimum 32 characters) and real-time Server-Sent Events (`/api/stream`) UI updates.
 - **Live Attack Surface & Posture Inspector**: Executes real DNS (`A`, `MX`, `SPF`, `DMARC`) resolution, live port-443 X.509 TLS certificate handshake auditing, and HTTP security header inspections (`HSTS`, `CSP`, `X-Content-Type-Options`, server banner leaks) with copyable `openssl`/`curl`/`dig` verification commands and private-IP egress protection.
 - **Static Artifact & Payload Analyzer**: Computes SHA-256, SHA-1, and MD5 digests, Shannon byte entropy (`0–8 bits/byte`), magic-byte file identification, automatic Base64 payload decoding, IOC extraction, and rule matching on uploaded files or pasted scripts.
 - **MITRE ATT&CK Coverage & RDAP/DNS IOC Enrichment**: Enterprise technique coverage matrix paired with reverse PTR, DNS, and RDAP network registry lookups.
@@ -32,7 +32,7 @@ Copy `.env.example` to `.env` and configure your secrets:
 cp .env.example .env
 ```
 - `GEMINI_API_KEY`: Optional Google Gemini API key for live Copilot inference (falls back cleanly to deterministic triage output if unset).
-- `SENTINEL_INGEST_KEY`: Optional shared secret required on `Authorization: Bearer <key>` or `X-Sentinel-Ingest-Key` for `/api/v1/ingest/webhook`.
+- `SENTINEL_INGEST_KEY`: Required shared secret of at least 32 characters, sent using `Authorization: Bearer <key>` or `X-Sentinel-Ingest-Key` for `/api/v1/ingest/webhook`. Generate with `openssl rand -hex 32`. Without it, webhook ingestion returns HTTP 503.
 
 ### 3. Run in development
 ```bash
@@ -81,3 +81,25 @@ When an active rule matches, SentinelAI creates an incident, appends a SHA-256 a
 - Pattern length and nested-quantifier validation on custom detection rules
 - Sliding-window rate limiting on `/api/*`, `/api/ai/*`, and `/api/scanner/*`
 - Timing-safe secret comparison (`crypto.timingSafeEqual`) for webhook ingestion authentication
+
+
+## Operational safety status
+
+SentinelAI currently includes functional telemetry parsing, pattern-based detection, DNS/TLS/HTTP inspection and static artifact analysis. It is **not yet a production SIEM/SOAR deployment**.
+
+Important safeguards in this branch:
+
+- The external webhook collector fails closed unless `SENTINEL_INGEST_KEY` is configured with at least 32 characters.
+- Playbook execution and endpoint isolation return HTTP 501 until real response adapters are integrated. They do not mark incidents mitigated or assets isolated.
+- Workspace reset is disabled in production mode.
+- The current local JSON workspace store, demo seed data, client-selected role display and regex-backed rule execution are not substitutes for a durable multi-tenant database, server-side identity/RBAC or native Sigma/YARA/Suricata engines.
+- Do not connect production endpoints or use SentinelAI as the sole security control until the release gates in [SECURITY.md](SECURITY.md) are met.
+
+For a real collector request, send a JSON body and the configured secret:
+
+```bash
+curl -X POST http://localhost:3000/api/v1/ingest/webhook \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer $SENTINEL_INGEST_KEY" \\
+  -d '{"source":"syslog","host":"lab-linux-01","raw":"sshd: Failed password for invalid user admin from 203.0.113.10 port 22 ssh2"}'
+```
