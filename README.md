@@ -33,6 +33,7 @@ cp .env.example .env
 ```
 - `GEMINI_API_KEY`: Optional Google Gemini API key for live Copilot inference (falls back cleanly to deterministic triage output if unset).
 - `SENTINEL_INGEST_KEY`: Required shared secret of at least 32 characters, sent using `Authorization: Bearer <key>` or `X-Sentinel-Ingest-Key` for `/api/v1/ingest/webhook`. Generate with `openssl rand -hex 32`. Without it, webhook ingestion returns HTTP 503.
+- `TRUST_PROXY_HOPS`: Defaults to `0` (trust no forwarded proxy headers). Set only to the exact number of trusted reverse-proxy hops when the app cannot be reached directly.
 
 ### 3. Run in development
 ```bash
