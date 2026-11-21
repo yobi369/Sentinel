@@ -124,7 +124,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Bottom Operator Context & Audit Ledger Trigger */}
       <div className="p-3 border-t border-white/[0.08] space-y-2.5">
         <div>
-          <label className="block text-[11px] text-zinc-500 px-1 mb-1">Active Role</label>
+          <label className="block text-[11px] text-zinc-500 px-1 mb-1">Demo role (not authenticated)</label>
           <select
             value={role}
             onChange={(e) => setRole(e.target.value as UserRole)}
@@ -136,6 +136,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <option value="Compliance Lead">Compliance Lead</option>
             <option value="CISO">CISO</option>
           </select>
+          <p className="px-1 mt-1.5 text-[10px] leading-relaxed text-amber-400/80">Display context only. This selection does not grant permissions or identify a verified operator.</p>
         </div>
 
         <button
