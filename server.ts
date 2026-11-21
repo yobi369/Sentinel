@@ -55,7 +55,10 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 app.disable('x-powered-by');
-app.set('trust proxy', 1);
+// Trust proxy headers only when the deployment explicitly declares its proxy hop count.
+// Never trust X-Forwarded-For from arbitrary direct clients by default.
+const configuredProxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);
+app.set('trust proxy', Number.isInteger(configuredProxyHops) && configuredProxyHops > 0 ? configuredProxyHops : false);
 app.use(express.json({ limit: '10mb' }));
 
 // Baseline security headers (compatible with preview iframe embedding)
@@ -802,68 +805,16 @@ app.post('/api/scanner/inspect', async (req, res) => {
     .split(':')[0]
     .toLowerCase();
 
-  // Internal RFC1918 Asset / CIDR Inspection
+  // Internal scanning is not implemented. The previous implementation returned
+  // seeded vulnerability/attack-path examples as if they were live observations.
+  // Fail closed until an authenticated in-network scanner agent is available.
   if (isPrivateOrLocalTarget(rawTarget.trim())) {
-    const matchedAssets = store.assets.filter(
-      (a) => a.ip === cleanHost || a.subnet.includes(rawTarget.trim()) || rawTarget.includes('10.0.')
-    );
-    const findings: SurfaceFinding[] = store.vulnerabilities.map((v) => ({
-      id: v.cve,
-      title: `${v.cve}: ${v.title}`,
-      category: 'CVE',
-      severity: v.severity,
-      cvss: v.cvss,
-      evidence: `Affected internal asset: ${v.affectedAsset} — ${v.description}`,
-      verificationCmd: v.pocCommand,
-      remediation: v.patchScript,
-    }));
-
-    const attackPath: AttackPathStep[] = [
-      {
-        id: 'AP-1',
-        stepNumber: 1,
-        phaseName: 'Initial Access',
-        sourceNode: 'External Edge (0.0.0.0/0)',
-        targetNode: 'web-frontend-stage (10.0.2.14)',
-        techniqueUsed: 'CVE-2023-4863 (libwebp)',
-        riskDescription: 'Publicly reachable upload parser on staging tier exposes heap memory corruption primitive.',
-        remediation: 'Upgrade libwebp >= 1.3.2 and isolate staging ingress.',
-      },
-      {
-        id: 'AP-2',
-        stepNumber: 2,
-        phaseName: 'Privilege Escalation',
-        sourceNode: 'web-frontend-stage (www-data)',
-        targetNode: 'bastion-gw-01 (10.0.1.10)',
-        techniqueUsed: 'CVE-2024-3094 (liblzma)',
-        riskDescription: 'Shared SSH deployment key permits lateral pivot into DMZ bastion node.',
-        remediation: 'Upgrade xz-utils/liblzma5 and enforce short-lived OIDC SSH certificates.',
-      },
-      {
-        id: 'AP-3',
-        stepNumber: 3,
-        phaseName: 'Data Tier Reachability',
-        sourceNode: 'bastion-gw-01 (root)',
-        targetNode: 'prod-db-01 (10.0.1.45:5432)',
-        techniqueUsed: 'Permissive East-West Subnet ACL',
-        riskDescription: 'East-west security group allows TCP/5432 from bastion subnet without mTLS client cert.',
-        remediation: 'Enforce PostgreSQL hostssl + clientcert=verify-full in pg_hba.conf.',
-      },
-    ];
-
-    const result: SurfaceScanResult = {
-      target: rawTarget.trim(),
-      targetType: 'internal-cidr',
-      scannedAt: new Date().toISOString(),
-      durationMs: Math.round(performance.now() - startTime),
-      resolvedIps: matchedAssets.map((a) => a.ip),
-      dns: { mxRecords: [], hasSpf: false, hasDmarc: false, txtRecordsCount: 0 },
-      findings,
-      attackPath,
-    };
-
-    appendAuditLog(roleToActor(role), role, 'INTERNAL_SURFACE_SCAN', 'SURFACE', rawTarget.trim(), 'SUCCESS');
-    return res.json({ result, auditVerification: verifyAuditChain() });
+    return res.status(501).json({
+      error: 'Internal network scanning is not configured',
+      code: 'INTERNAL_SCANNER_NOT_CONFIGURED',
+      message: 'No internal hosts were scanned and no vulnerability findings were generated. The previous demo-only internal scan has been disabled.',
+      operationalStatus: 'NOT_SCANNED',
+    });
   }
 
   // Public Domain Live DNS + TLS + HTTP Security Header Inspection (with SSRF IP-egress guard)
@@ -874,12 +825,22 @@ app.post('/api/scanner/inspect', async (req, res) => {
   }
 
   try {
-    const [aRecords, mxRecords, txtRecords, dmarcRecords] = await Promise.all([
+    const [aRecords, aaaaRecords, mxRecords, txtRecords, dmarcRecords] = await Promise.all([
       dns.resolve4(cleanHost).catch(() => [] as string[]),
+      dns.resolve6(cleanHost).catch(() => [] as string[]),
       dns.resolveMx(cleanHost).catch(() => [] as { exchange: string; priority: number }[]),
       dns.resolveTxt(cleanHost).catch(() => [] as string[][]),
       dns.resolveTxt(`_dmarc.${cleanHost}`).catch(() => [] as string[][]),
     ]);
+
+    // IPv6 destinations are intentionally refused until the scanner has a
+    // complete IPv6 special-purpose address classifier and pinned connection path.
+    if (aaaaRecords.length > 0) {
+      return res.status(403).json({
+        error: 'Target has IPv6 records; IPv6 probing is disabled until destination validation is supported.',
+        code: 'IPV6_SCAN_DISABLED',
+      });
+    }
 
     if (aRecords.length === 0) {
       return res.status(400).json({ error: `DNS A-record resolution returned no public IPv4 addresses for ${cleanHost}.` });
@@ -902,7 +863,7 @@ app.post('/api/scanner/inspect', async (req, res) => {
     try {
       const resp = await fetch(`https://${cleanHost}`, {
         method: 'GET',
-        redirect: 'follow',
+        redirect: 'manual',
         signal: controller.signal,
       });
       const hdrs: Record<string, string | null> = {
