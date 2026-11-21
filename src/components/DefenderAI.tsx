@@ -119,7 +119,7 @@ export const DefenderAI: React.FC<DefenderAIProps> = ({
         <div>
           <h1 className="text-xl font-semibold text-white tracking-tight">Detection Engineering &amp; SOAR</h1>
           <p className="text-xs text-zinc-400 mt-0.5">
-            Manage Sigma, YARA, and Suricata signatures, benchmark patterns against live telemetry, and orchestrate response playbooks.
+            Manage regex-backed detection patterns and inspect telemetry. Sigma/YARA/Suricata native engines and external response execution are not yet integrated.
           </p>
         </div>
 
