@@ -316,6 +316,9 @@ app.get('/api/state', (_req, res) => {
 });
 
 app.post('/api/state/reset', (_req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).json({ error: 'Not found' });
+  }
   store = createInitialStore();
   saveStore(store);
   res.json({
@@ -355,36 +358,19 @@ app.patch('/api/alerts/:id', (req, res) => {
 });
 
 // Playbook Execution
+// Playbook execution is deliberately fail-closed until a verified response
+// adapter (EDR, firewall, cloud control plane, etc.) is configured.
+// Never mark an incident mitigated based only on a UI/API state change.
 app.post('/api/playbooks/:id/execute', (req, res) => {
-  const { id } = req.params;
-  const { alertId, role = 'SOC Tier 3 Lead' } = req.body || {};
-  const playbook = store.playbooks.find((p) => p.id === id);
+  const playbook = store.playbooks.find((p) => p.id === req.params.id);
   if (!playbook) return res.status(404).json({ error: 'Playbook not found' });
-
-  playbook.executionCount += 1;
-  playbook.status = 'Completed';
-  playbook.lastExecutedAt = new Date().toISOString().replace('T', ' ').substring(0, 19);
-
-  let updatedAlert: IncidentAlert | undefined;
-  if (alertId) {
-    updatedAlert = store.alerts.find((a) => a.id === alertId);
-    if (updatedAlert) {
-      updatedAlert.playbookExecuted = true;
-      updatedAlert.status = 'Mitigated';
-    }
-  }
-
-  const auditEntry = appendAuditLog(
-    roleToActor(role),
-    role,
-    'PLAYBOOK_EXECUTE',
-    'SOAR',
-    alertId ? `${playbook.id} mitigated ${alertId}` : `${playbook.id} (${playbook.name})`,
-    'EXECUTED'
-  );
-
-  saveStore(store);
-  res.json({ playbook, alert: updatedAlert, auditEntry, auditVerification: verifyAuditChain() });
+  return res.status(501).json({
+    error: 'Response execution is not configured',
+    code: 'RESPONSE_ADAPTER_NOT_CONFIGURED',
+    message: 'No external response action was performed. The incident and asset state were not changed.',
+    playbookId: playbook.id,
+    operationalStatus: 'NOT_EXECUTED',
+  });
 });
 
 // Toggle Playbook Auto-Trigger
@@ -409,31 +395,18 @@ app.patch('/api/playbooks/:id', (req, res) => {
 });
 
 // Asset Isolation / Restoration
+// Host isolation/restoration requires a real endpoint or network-control adapter.
+// Refuse the operation rather than presenting a database flag as containment.
 app.post('/api/assets/:id/isolate', (req, res) => {
-  const { id } = req.params;
-  const { role = 'SOC Tier 3 Lead', restore = false } = req.body || {};
-  const asset = store.assets.find((a) => a.id === id);
+  const asset = store.assets.find((a) => a.id === req.params.id);
   if (!asset) return res.status(404).json({ error: 'Asset not found' });
-
-  if (restore) {
-    asset.status = 'Protected';
-    asset.riskScore = Math.max(asset.riskScore, 24);
-  } else {
-    asset.status = 'Isolated';
-    asset.riskScore = 10;
-  }
-
-  const auditEntry = appendAuditLog(
-    roleToActor(role),
-    role,
-    restore ? 'HOST_NETWORK_RESTORE' : 'HOST_EBPF_ISOLATION',
-    'ASSETS',
-    `${asset.name} (${asset.ip})`,
-    'EXECUTED'
-  );
-
-  saveStore(store);
-  res.json({ asset, auditEntry, auditVerification: verifyAuditChain() });
+  return res.status(501).json({
+    error: 'Endpoint containment is not configured',
+    code: 'CONTAINMENT_ADAPTER_NOT_CONFIGURED',
+    message: 'No network isolation or restoration was performed. Asset state was not changed.',
+    assetId: asset.id,
+    operationalStatus: 'NOT_EXECUTED',
+  });
 });
 
 // Live Event Ingestion + Detection Engine Evaluation
@@ -538,17 +511,23 @@ app.get('/api/stream', (req, res) => {
   });
 });
 
-// External Webhook / SIEM Collector Endpoint (supports optional SENTINEL_INGEST_KEY auth)
+// External Webhook / SIEM Collector Endpoint (requires SENTINEL_INGEST_KEY auth)
 app.post('/api/v1/ingest/webhook', (req, res) => {
-  const configuredKey = process.env.SENTINEL_INGEST_KEY;
-  if (configuredKey && configuredKey.trim().length > 0) {
-    const authHeader = req.headers.authorization || '';
-    const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
-    const headerKey = String(req.headers['x-sentinel-ingest-key'] || '').trim();
-    const provided = bearer || headerKey;
-    if (!provided || !timingSafeSecretEquals(provided, configuredKey.trim())) {
-      return res.status(401).json({ error: 'Invalid or missing ingest credentials' });
-    }
+  const configuredKey = process.env.SENTINEL_INGEST_KEY?.trim();
+  // Authentication is mandatory: an unset secret must never silently expose
+  // the external collector endpoint to unauthenticated internet traffic.
+  if (!configuredKey || configuredKey.length < 32) {
+    return res.status(503).json({
+      error: 'Webhook ingestion is disabled until SENTINEL_INGEST_KEY is configured',
+      code: 'INGEST_AUTH_NOT_CONFIGURED',
+    });
+  }
+  const authHeader = req.headers.authorization || '';
+  const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+  const headerKey = String(req.headers['x-sentinel-ingest-key'] || '').trim();
+  const provided = bearer || headerKey;
+  if (!provided || !timingSafeSecretEquals(provided, configuredKey)) {
+    return res.status(401).json({ error: 'Invalid or missing ingest credentials' });
   }
 
   const { source = 'webhook', host = 'external-collector', raw, event: payloadObj } = req.body || {};
